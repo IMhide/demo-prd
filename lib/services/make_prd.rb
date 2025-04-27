@@ -5,9 +5,11 @@ module Services
     OUTPUT_PATH = './outputs/prd-%{time}.md'
     END_OF_DOCUMENT = '!Document!'
     SPINNER = 'Thinking [:spinner] '
+    QUALITY_THRESHOLD = 85
 
-    def initialize(agent_class: Agents::ChainOfThough)
+    def initialize(agent_class: Agents::ChainOfThough, evaluator_service: Services::EvaluatePrd)
       @agent_class = agent_class
+      @evaluator_service = evaluator_service
       @tty_prompt_class = TTY::Prompt
       @tty_markdown_parser = TTY::Markdown
       @spinner_class = TTY::Spinner
@@ -20,7 +22,8 @@ module Services
       spinner = @spinner_class.new(SPINNER, format: :bouncing_ball)
 
       first_step(agent:, spinner:)
-      main_loop(agent:, spinner:)
+      prd = main_loop(agent:, spinner:)
+      Success(prd)
     end
 
     private
@@ -37,32 +40,55 @@ module Services
     def main_loop(agent:, spinner:)
       colorizer = @colorizer_class.new
       tty_prompt = @tty_prompt_class.new
+      llm_input = nil
 
       Kernel.loop do
-        user_input = tty_prompt.multiline(colorizer.yellow('>>> '))
+        if llm_input.nil?
+          llm_input = tty_prompt.multiline(colorizer.yellow('>>> ')).join('')
+        else
+          puts(colorizer.yellow(">>> #{llm_input}"))
+        end
+
         spinner.auto_spin
-        agent.ask(content: user_input.join(''))
+
+        agent.ask(content: llm_input)
         agent_response = agent.parse(agent.history.last.content)
+
         spinner.stop("🎉 Done\n")
         puts(@tty_markdown_parser.parse(agent_response['answer']))
+        llm_input = nil
+
         if agent_response['final_answer']
           prd = extract_prd(agent_response['answer'])
-          @file_class.write(OUTPUT_PATH % {time: Time.now.to_i}, prd.join("\n"))
-          return Success(prd)
+          result = @evaluator_service.call(prd:, quality_threshold: QUALITY_THRESHOLD)
+
+          Dry::Matcher::ResultMatcher.call(result) do |matcher|
+            matcher.failure do |failure|
+              llm_input = rework_prd_prompt(failure['answer'])
+              puts(colorizer.red("Quality check failed - Score : #{failure["answer"]["score"]} Threshold : #{QUALITY_THRESHOLD}"))
+            end
+            matcher.success do |success|
+              @file_class.write(OUTPUT_PATH % {time: Time.now.to_i}, prd)
+              return prd
+            end
+          end
         end
       end
     end
 
     def extract_prd(agent_response)
-      agent_response['answer'].split("\n").map do |line|
-        break if line.include?(END_OF_DOCUMENT)
-        line
-      end
+      agent_response.split('!Document!', 2).first
     end
 
-    def validate_prd(prd)
-      # TODO: Implement validation with chain of thought agent and notation, a critic containing good and bad points.
-      # Validation depend on a treshold notation.
+    def rework_prd_prompt(evaluation)
+      <<~PROMPT
+        This PRD is not good enough. Please rework it.
+
+        Here is the good points:
+        #{evaluation["good_points"]}
+        Here is the bad points:
+        #{evaluation["bad_points"]}
+      PROMPT
     end
   end
 end
