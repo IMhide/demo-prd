@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Services
   class MakePrd < Base
     AGENT_YAML_PATH = './agents/senior_product_manager.yml'
@@ -7,77 +9,56 @@ module Services
     SPINNER = 'Thinking [:spinner] '
     QUALITY_THRESHOLD = 85
 
-    def initialize(agent_class: Agents::ChainOfThough, evaluator_service: Services::EvaluatePrd)
-      @agent_class = agent_class
+    def initialize(agent: Agents::ChainOfThough.from_yaml(AGENT_YAML_PATH), evaluator_service: Services::EvaluatePrd)
+      @agent = agent
       @evaluator_service = evaluator_service
-      @tty_prompt_class = TTY::Prompt
+      @tty_prompt = TTY::Prompt.new
       @tty_markdown_parser = TTY::Markdown
-      @spinner_class = TTY::Spinner
-      @colorizer_class = Pastel
-      @file_class = File
+      @spinner = TTY::Spinner.new(SPINNER, format: :bouncing_ball)
+      @colorizer = Pastel.new
     end
 
     def call
-      agent = @agent_class.from_yaml(AGENT_YAML_PATH)
-      spinner = @spinner_class.new(SPINNER, format: :bouncing_ball)
-
-      first_step(agent:, spinner:)
-      prd = main_loop(agent:, spinner:)
-      Success(prd)
-    end
-
-    private
-
-    def first_step(agent:, spinner:)
-      task = @file_class.read(PROMPT_PATH)
-      agent.ask(content: task)
-      agent_response = agent.parse(agent.history.last.content)
-      spinner.auto_spin
-      puts(@tty_markdown_parser.parse(agent_response['answer']))
-      spinner.stop("🎉 Done\n")
-    end
-
-    def main_loop(agent:, spinner:)
-      colorizer = @colorizer_class.new
-      tty_prompt = @tty_prompt_class.new
-      llm_input = nil
+      llm_input = File.read(PROMPT_PATH)
 
       Kernel.loop do
-        if llm_input.nil?
-          llm_input = tty_prompt.multiline(colorizer.yellow('>>> ')).join('')
-        else
-          puts(colorizer.yellow(">>> #{llm_input}"))
-        end
-
-        spinner.auto_spin
-
-        agent.ask(content: llm_input)
-        agent_response = agent.parse(agent.history.last.content)
-
-        spinner.stop("🎉 Done\n")
-        puts(@tty_markdown_parser.parse(agent_response['answer']))
+        llm_input = llm_input_init(llm_input:)
+        agent_response = ask_llm(llm_input:)
         llm_input = nil
 
         if agent_response['final_answer']
-          prd = extract_prd(agent_response['answer'])
+          prd = agent_response['answer'].split(END_OF_DOCUMENT, 2).first
           result = @evaluator_service.call(prd:, quality_threshold: QUALITY_THRESHOLD)
 
-          Dry::Matcher::ResultMatcher.call(result) do |matcher|
-            matcher.failure do |failure|
-              llm_input = rework_prd_prompt(failure['answer'])
-              puts(colorizer.red("Quality check failed - Score : #{failure["answer"]["score"]} Threshold : #{QUALITY_THRESHOLD}"))
-            end
-            matcher.success do |success|
-              @file_class.write(OUTPUT_PATH % {time: Time.now.to_i}, prd)
-              return prd
-            end
+          if result.success?
+            File.write(OUTPUT_PATH % {time: Time.now.to_i}, prd)
+            return Success(prd)
+          else
+            llm_input = rework_prd_prompt(result.failure['answer'])
+            puts(@colorizer.red("Quality check failed - Score : #{result.failure["answer"]["score"]} Threshold : #{QUALITY_THRESHOLD}"))
           end
         end
       end
     end
 
-    def extract_prd(agent_response)
-      agent_response.split('!Document!', 2).first
+    private
+
+    def llm_input_init(llm_input:)
+      if llm_input.nil?
+        llm_input = @tty_prompt.multiline(@colorizer.yellow('>>> ')).join('')
+      else
+        puts(@colorizer.yellow(">>> #{llm_input}"))
+      end
+      llm_input
+    end
+
+    def ask_llm(llm_input:)
+      @spinner.auto_spin
+      @agent.ask(content: llm_input)
+      agent_response = @agent.parse(@agent.history.last.content)
+      @spinner.stop("🎉 Done\n")
+      puts(@tty_markdown_parser.parse(agent_response['answer']))
+      agent_response
     end
 
     def rework_prd_prompt(evaluation)
