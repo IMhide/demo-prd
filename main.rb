@@ -38,4 +38,7 @@ Langchain.logger.level = Logger::DEBUG
 # v  Write your main loop downhere v
 #
 
-Services::MakePrd.call
+# Services::MakePrd.call
+
+prd = File.read('./outputs/prd-1745765622.md')
+Services::CreateUserStories.call(prd:)

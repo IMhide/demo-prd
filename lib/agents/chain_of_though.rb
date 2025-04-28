@@ -27,7 +27,7 @@ module Agents
         },
         final_answer: {
           type: 'boolean',
-          description: 'Whether the answer is final.',
+          description: 'An answer is final if you think that you\'re done with the task and the user confirmed you that is finished.',
           default: false
         }
       }
