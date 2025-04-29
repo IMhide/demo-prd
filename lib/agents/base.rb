@@ -55,6 +55,16 @@ module Agents
       @assistant.messages
     end
 
+    def add_tool(tool)
+      raise NotAToolError unless tool.is_a?(Tools::Base)
+      @tools = if tools.nil?
+        [tool]
+      else
+        @tools << tool
+      end
+      @assistant.tools = @tools
+    end
+
     #
     # Prompts
     #
@@ -64,6 +74,8 @@ module Agents
         #{persona_prompt}
 
         #{teammates_prompt}
+
+        #{tools_prompt}
       PROMPT
     end
 
@@ -77,11 +89,20 @@ module Agents
     end
 
     def teammates_prompt
-      if teammates.any?
+      if !@teammates.nil? && @teammates.any?
         <<~PROMPT
 
           You are a member of a team that is composed of the following teammates:
           #{teammates.map { |teammate| "#{teammate.identifer} - #{teammate.role}" }.join("\n")}
+        PROMPT
+      end
+    end
+
+    def tools_prompt
+      if !@tools.nil? && @tools.any?
+        <<~PROMPT
+          Here is some informations about the tools you can use:
+          #{tools.map { |tool| tool.tool_description }.join("\n")}
         PROMPT
       end
     end

@@ -18,3 +18,8 @@ gem 'dotenv'
 gem 'pastel'
 gem 'tty-markdown'
 gem 'tty-spinner'
+gem 'pry-byebug'
+gem 'byebug'
+gem 'irb'
+
+gem 'http'

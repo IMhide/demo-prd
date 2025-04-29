@@ -12,6 +12,7 @@ module Services
       @tty_markdown_parser = TTY::Markdown
       @spinner = TTY::Spinner.new(SPINNER, format: :bouncing_ball)
       @colorizer = Pastel.new
+      @agent.add_tool(Tools::Linear.new)
     end
 
     def call(prd:)
